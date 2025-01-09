@@ -30,7 +30,6 @@ cfg_if::cfg_if! {
     feature = "with-db"
 ))]
 use std::process::exit;
-
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -179,7 +178,7 @@ enum ComponentArg {
     /// Generates a new model file for defining the data structure of your
     /// application, and test file logic.
     #[command(after_help = format!(
-    "{}  
+    "{}
   - Generate empty model:
       $ cargo loco g model posts
 
@@ -275,7 +274,7 @@ After running the migration, follow these steps to complete the process:
     },
     /// Generate a new controller with the given controller name, and test file.
     #[command(after_help = format!(
-    "{}  
+    "{}
   - Generate an empty controller:
       $ cargo loco generate controller posts --api
 
@@ -331,7 +330,8 @@ After running the migration, follow these steps to complete the process:
         kind: DeploymentKind,
     },
 
-    /// Override templates and allows you to take control of them. You can always go back when deleting the local template.
+    /// Override templates and allows you to take control of them. You can
+    /// always go back when deleting the local template.
     #[command(after_help = format!("{}
   - Override a Specific File:
       * cargo loco generate override scaffold/api/controller.t
@@ -348,7 +348,8 @@ After running the migration, follow these steps to complete the process:
         /// The path to a specific template or directory to copy.
         template_path: Option<String>,
 
-        /// Show available templates to copy under the specified directory without actually coping them.
+        /// Show available templates to copy under the specified directory
+        /// without actually coping them.
         #[arg(long, action)]
         info: bool,
     },

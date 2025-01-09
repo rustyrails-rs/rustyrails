@@ -15,8 +15,7 @@ use crate::{
     app::{AppContext, Hooks},
     banner::print_banner,
     bgworker, cache,
-    config::Config,
-    config::{self, WorkerMode},
+    config::{self, Config, WorkerMode},
     controller::ListRoutes,
     environment::Environment,
     errors::Error,
@@ -347,6 +346,7 @@ pub async fn create_context<H: Hooks>(
         cache: cache::Cache::new(cache::drivers::null::new()).into(),
         config,
         mailer,
+        session_store: None,
     };
 
     H::after_context(ctx).await

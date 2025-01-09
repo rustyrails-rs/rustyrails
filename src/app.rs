@@ -23,6 +23,7 @@ use crate::{
     },
     environment::Environment,
     mailer::EmailSender,
+    request_context::TowerSessionStore,
     storage::Storage,
     task::Tasks,
     Result,
@@ -52,6 +53,8 @@ pub struct AppContext {
     pub storage: Arc<Storage>,
     // Cache instance for the application
     pub cache: Arc<cache::Cache>,
+    /// Request context session store
+    pub session_store: Option<TowerSessionStore>,
 }
 
 /// A trait that defines hooks for customizing and extending the behavior of a
@@ -143,10 +146,11 @@ pub trait Hooks: Send {
         Ok(false)
     }
 
-    /// Loads the configuration settings for the application based on the given environment.
+    /// Loads the configuration settings for the application based on the given
+    /// environment.
     ///
-    /// This function is responsible for retrieving the configuration for the application
-    /// based on the current environment.
+    /// This function is responsible for retrieving the configuration for the
+    /// application based on the current environment.
     async fn load_config(env: &Environment) -> Result<Config> {
         env.load()
     }
@@ -196,6 +200,7 @@ pub trait Hooks: Send {
 
     // Provides the options to change Loco [`AppContext`] after initialization.
     async fn after_context(ctx: AppContext) -> Result<AppContext> {
+        // ctx.session_store = Some(CustomSessionStore::new(MemoryStore::default()));
         Ok(ctx)
     }
 
