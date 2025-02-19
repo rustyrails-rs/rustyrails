@@ -32,7 +32,7 @@ cfg_if::cfg_if! {
 use std::process::exit;
 use std::{collections::BTreeMap, path::PathBuf};
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use colored::Colorize;
 use duct::cmd;
 
@@ -45,6 +45,7 @@ use crate::{
         start, RunDbCommand, ServeParams, StartMode,
     },
     config::Config,
+    controller,
     environment::{resolve_from_env, Environment, DEFAULT_ENVIRONMENT},
     logger, task, Error,
 };
@@ -75,11 +76,14 @@ enum Commands {
     #[clap(alias("s"))]
     Start {
         /// start worker
-        #[arg(short, long, action)]
+        #[arg(short, long, action, conflicts_with_all = &["server_and_worker", "all"])]
         worker: bool,
-        /// start same-process server and worker
-        #[arg(short, long, action)]
+        /// Start the server and worker in the same process
+        #[arg(short, long, action, conflicts_with_all = &["worker", "all"])]
         server_and_worker: bool,
+        /// Start the server, worker, and scheduler in the same process
+        #[arg(short, long, action, conflicts_with_all = &["worker", "server_and_worker"])]
+        all: bool,
         /// server bind address
         #[arg(short, long, action)]
         binding: Option<String>,
@@ -130,7 +134,7 @@ enum Commands {
         /// Specify a path to a dedicated scheduler configuration file. by
         /// default load schedulers job setting from environment config.
         #[clap(value_parser)]
-        #[arg(short = 'c', long = "config", action)]
+        #[arg(short = 'c', long = "config", action, value_hint = ValueHint::FilePath)]
         config_path: Option<PathBuf>,
         /// Show all configured jobs
         #[arg(short, long, action)]
@@ -325,7 +329,7 @@ After running the migration, follow these steps to complete the process:
     Deployment {
         // deployment kind.
         #[clap(long, value_enum)]
-        kind: loco_gen::DeploymentKind,
+        kind: DeploymentKind,
     },
 
     /// Override templates and allows you to take control of them. You can
@@ -420,29 +424,7 @@ impl ComponentArg {
             Self::Scheduler {} => Ok(loco_gen::Component::Scheduler {}),
             Self::Worker { name } => Ok(loco_gen::Component::Worker { name }),
             Self::Mailer { name } => Ok(loco_gen::Component::Mailer { name }),
-            Self::Deployment { kind } => {
-                let copy_asset_folder = &config
-                    .server
-                    .middlewares
-                    .static_assets
-                    .clone()
-                    .map(|a| a.folder.path);
-
-                let fallback_file = &config
-                    .server
-                    .middlewares
-                    .static_assets
-                    .clone()
-                    .map(|a| a.fallback);
-
-                Ok(loco_gen::Component::Deployment {
-                    kind,
-                    asset_folder: copy_asset_folder.clone(),
-                    fallback_file: fallback_file.clone(),
-                    host: config.server.host.clone(),
-                    port: config.server.port,
-                })
-            }
+            Self::Deployment { kind } => Ok(kind.to_generator_component(config)),
             Self::Override {
                 template_path: _,
                 info: _,
@@ -524,6 +506,53 @@ impl From<DbCommands> for RunDbCommand {
     }
 }
 
+#[derive(clap::ValueEnum, Clone)]
+pub enum DeploymentKind {
+    Docker,
+    Shuttle,
+    Nginx,
+}
+
+impl DeploymentKind {
+    fn to_generator_component(&self, config: &Config) -> loco_gen::Component {
+        let kind = match self {
+            Self::Docker => {
+                let mut copy_paths = vec![];
+
+                if let Some(static_assets) = &config.server.middlewares.static_assets {
+                    let asset_folder =
+                        PathBuf::from(controller::views::engines::DEFAULT_ASSET_FOLDER);
+                    if asset_folder.exists() {
+                        copy_paths.push(asset_folder.clone());
+                    }
+                    if !static_assets.folder.path.starts_with(&asset_folder) {
+                        copy_paths.push(PathBuf::from(&static_assets.folder.path));
+                    }
+                    if !static_assets.fallback.starts_with(asset_folder) {
+                        copy_paths.push(PathBuf::from(&static_assets.fallback));
+                    }
+                }
+
+                let is_client_side_rendering =
+                    PathBuf::from("frontend").join("package.json").exists();
+
+                loco_gen::DeploymentKind::Docker {
+                    copy_paths,
+                    is_client_side_rendering,
+                }
+            }
+            Self::Shuttle => loco_gen::DeploymentKind::Shuttle {
+                runttime_version: None,
+            },
+            Self::Nginx => loco_gen::DeploymentKind::Nginx {
+                host: config.server.host.to_string(),
+                port: config.server.port,
+            },
+        };
+        loco_gen::Component::Deployment { kind }
+    }
+}
+
 #[cfg(any(feature = "bg_redis", feature = "bg_pg", feature = "bg_sqlt"))]
 #[derive(Subcommand)]
 enum JobsCommands {
@@ -565,6 +594,13 @@ enum JobsCommands {
         /// Path to the file containing job details to import.
         #[arg(short, long)]
         file: PathBuf,
+    },
+    /// Change `processing` status to `queue`.
+    Requeue {
+        /// Change `processing` jobs older than the specified
+        /// maximum age in minutes.
+        #[arg(long, default_value_t = 0)]
+        from_age: i64,
     },
 }
 
@@ -648,6 +684,7 @@ pub async fn main<H: Hooks, M: MigratorTrait>() -> crate::Result<()> {
         Commands::Start {
             worker,
             server_and_worker,
+            all,
             binding,
             port,
             no_banner,
@@ -656,6 +693,8 @@ pub async fn main<H: Hooks, M: MigratorTrait>() -> crate::Result<()> {
                 StartMode::WorkerOnly
             } else if server_and_worker {
                 StartMode::ServerAndWorker
+            } else if all {
+                StartMode::All
             } else {
                 StartMode::ServerOnly
             };
@@ -789,6 +828,7 @@ pub async fn main<H: Hooks>() -> crate::Result<()> {
         Commands::Start {
             worker,
             server_and_worker,
+            all,
             binding,
             port,
             no_banner,
@@ -797,6 +837,8 @@ pub async fn main<H: Hooks>() -> crate::Result<()> {
                 StartMode::WorkerOnly
             } else if server_and_worker {
                 StartMode::ServerAndWorker
+            } else if all {
+                StartMode::All
             } else {
                 StartMode::ServerOnly
             };
@@ -1044,6 +1086,7 @@ async fn handle_job_command<H: Hooks>(
             Ok(())
         }
         JobsCommands::Import { file } => queue.import(file.as_path()).await,
+        JobsCommands::Requeue { from_age } => queue.requeue(from_age).await,
     }
 }
 
